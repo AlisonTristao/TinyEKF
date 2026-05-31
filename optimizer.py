@@ -129,20 +129,20 @@ h_jac = sp.simplify(h.jacobian(x))
 # ==========================================
 header_filename = "TinyEKF.h"
 
-generated_defines = """
-// ==========================================
-// ekf generated defines
-// ==========================================
-""".strip()
+generated_defines = (
+    "// ==========================================\n"
+    "// ekf generated defines\n"
+    "// ==========================================\n"
+)
 
 for name, value in default_defines.items():
-    generated_defines += f"\n#define {name} {value}"
+    generated_defines += f"#define {name} {value}\n"
 
-generated_defines += """\n
-// ==========================================
-// end ekf generated defines
-// ==========================================
-""".strip("\n")
+generated_defines += (
+    "// ==========================================\n"
+    "// end ekf generated defines\n"
+    "// ==========================================\n"
+)
 
 try:
     with open(header_filename, "r") as file:
@@ -155,7 +155,7 @@ try:
         r".*?"
         r"// ==========================================\n"
         r"// end ekf generated defines\n"
-        r"// =========================================="
+        r"// ==========================================\n?"
     )
 
     if re.search(pattern, h_content, flags=re.DOTALL | re.IGNORECASE):
@@ -166,7 +166,7 @@ try:
             flags=re.DOTALL | re.IGNORECASE
         )
     else:
-        h_content = generated_defines + "\n\n" + h_content
+        h_content = generated_defines + "\n" + h_content
 
     with open(header_filename, "w") as file:
         file.write(h_content)
@@ -175,7 +175,7 @@ try:
 
 except FileNotFoundError:
     with open(header_filename, "w") as file:
-        file.write(generated_defines + "\n\n")
+        file.write(generated_defines + "\n")
     print("header file created successfully!")
 
 # ==========================================
@@ -184,7 +184,6 @@ except FileNotFoundError:
 def generate_cpp_block(expr_matrix, prefix):
     expr_matrix = sp.simplify(expr_matrix)
     
-    # fix: inject specific prefix to prevent re-declaration errors in c++
     symbols_generator = sp.numbered_symbols(f"cse_{prefix}_")
     replacements, reduced_exprs = sp.cse(expr_matrix, symbols=symbols_generator)
 
@@ -213,27 +212,22 @@ def generate_cpp_block(expr_matrix, prefix):
             else:
                 code += f"    {prefix}[{row}][{col}] = next_{prefix}_{row}_{col};\n"
 
-    code += "\n"
     return code
-
 
 def generate_H_mask(H_sym):
     code = "static const bool H_MASK[EKF_MEASURE_DIM][EKF_STATE_DIM] = {\n"
 
     for row in range(dim_z):
         values = []
-
         for col in range(dim_x):
             if sp.simplify(H_sym[row, col]) != 0:
                 values.append("true")
             else:
                 values.append("false")
-
+        
         code += "    {" + ", ".join(values) + "}"
-
         if row < dim_z - 1:
             code += ","
-
         code += "\n"
 
     code += "};\n\n"
@@ -249,8 +243,7 @@ cpp_code += "#include <cmath>\n\n"
 
 cpp_code += generate_H_mask(h_jac)
 
-cpp_code += """
-static bool invertMatrix(
+cpp_code += """static bool invertMatrix(
     const float A[EKF_MEASURE_DIM][EKF_MEASURE_DIM],
     float A_inv[EKF_MEASURE_DIM][EKF_MEASURE_DIM]
 ) {
@@ -318,29 +311,27 @@ static bool invertMatrix(
 
     return true;
 }
+
 """
 
 # ==========================================
 # predict
 # ==========================================
 cpp_code += "void TinyEKF::predict(const float u[]) {\n"
-
 cpp_code += generate_cpp_block(f, "x")
-
-# calculate P = F * P * F^T + Q
+cpp_code += "\n"
 cpp_code += generate_cpp_block((f_jac * p * f_jac.T) + q, "P")
-
 cpp_code += "}\n\n"
 
 # ==========================================
 # update
 # ==========================================
 cpp_code += "void TinyEKF::update(const float z[], const float u[]) {\n"
-
 cpp_code += "    float h[EKF_MEASURE_DIM];\n"
 cpp_code += "    float H[EKF_MEASURE_DIM][EKF_STATE_DIM];\n\n"
 
 cpp_code += generate_cpp_block(h, "h")
+cpp_code += "\n"
 cpp_code += generate_cpp_block(h_jac, "H")
 
 cpp_code += """

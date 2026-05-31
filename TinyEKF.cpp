@@ -9,7 +9,6 @@ static const bool H_MASK[EKF_MEASURE_DIM][EKF_STATE_DIM] = {
     {true, true, false}
 };
 
-
 static bool invertMatrix(
     const float A[EKF_MEASURE_DIM][EKF_MEASURE_DIM],
     float A_inv[EKF_MEASURE_DIM][EKF_MEASURE_DIM]
@@ -78,6 +77,7 @@ static bool invertMatrix(
 
     return true;
 }
+
 void TinyEKF::predict(const float u[]) {
     // calculating x
     float cse_x_0 = EKF_K_L*EKF_TAU_R*u[1];
@@ -92,6 +92,7 @@ void TinyEKF::predict(const float u[]) {
     x[0] = next_x_0;
     x[1] = next_x_1;
     x[2] = next_x_2;
+
     // calculating P
     float cse_P_0 = pow(EKF_TAU_L, 2);
     float cse_P_1 = pow(EKF_TAU_R, 2);
@@ -146,6 +147,7 @@ void TinyEKF::predict(const float u[]) {
 void TinyEKF::update(const float z[], const float u[]) {
     float h[EKF_MEASURE_DIM];
     float H[EKF_MEASURE_DIM][EKF_STATE_DIM];
+
     // calculating h
     float next_h_0 = x[0];
     float next_h_1 = x[1];
@@ -158,6 +160,7 @@ void TinyEKF::update(const float z[], const float u[]) {
     h[2] = next_h_2;
     h[3] = next_h_3;
     h[4] = next_h_4;
+
     // calculating H
     float cse_H_0 = 1/(EKF_TAU_L*EKF_TAU_R);
     float next_H_0_0 = 1;

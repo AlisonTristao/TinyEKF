@@ -1,7 +1,6 @@
 // ==========================================
 // ekf generated defines
 // ==========================================
-
 #define EKF_STATE_DIM 3
 #define EKF_MEASURE_DIM 5
 #define EKF_CONTROL_DIM 2
@@ -12,7 +11,6 @@
 #define EKF_TAU_L 0.15f
 #define EKF_IMU_RX 0.1f
 #define EKF_IMU_RY 0.1f
-
 // ==========================================
 // end ekf generated defines
 // ==========================================
