@@ -16,6 +16,7 @@ static bool invertMatrix(
 ) {
     float aug[EKF_MEASURE_DIM][2 * EKF_MEASURE_DIM];
 
+    // build augmented matrix
     for (int i = 0; i < EKF_MEASURE_DIM; i++) {
         for (int j = 0; j < EKF_MEASURE_DIM; j++) {
             aug[i][j] = A[i][j];
@@ -23,23 +24,26 @@ static bool invertMatrix(
         }
     }
 
+    // gauss-jordan elimination
     for (int i = 0; i < EKF_MEASURE_DIM; i++) {
         int pivot = i;
         float max_val = std::fabs(aug[i][i]);
 
+        // partial pivoting
         for (int row = i + 1; row < EKF_MEASURE_DIM; row++) {
             float val = std::fabs(aug[row][i]);
-
             if (val > max_val) {
                 max_val = val;
                 pivot = row;
             }
         }
 
+        // singular matrix check
         if (max_val < 1e-9f) {
             return false;
         }
 
+        // swap rows if needed
         if (pivot != i) {
             for (int col = 0; col < 2 * EKF_MEASURE_DIM; col++) {
                 float temp = aug[i][col];
@@ -48,25 +52,24 @@ static bool invertMatrix(
             }
         }
 
+        // scale pivot row
         float div = aug[i][i];
-
         for (int col = 0; col < 2 * EKF_MEASURE_DIM; col++) {
             aug[i][col] /= div;
         }
 
+        // eliminate column entries
         for (int row = 0; row < EKF_MEASURE_DIM; row++) {
-            if (row == i) {
-                continue;
-            }
-
+            if (row == i) continue;
+            
             float factor = aug[row][i];
-
             for (int col = 0; col < 2 * EKF_MEASURE_DIM; col++) {
                 aug[row][col] -= factor * aug[i][col];
             }
         }
     }
 
+    // extract inverse matrix
     for (int i = 0; i < EKF_MEASURE_DIM; i++) {
         for (int j = 0; j < EKF_MEASURE_DIM; j++) {
             A_inv[i][j] = aug[i][j + EKF_MEASURE_DIM];
@@ -75,60 +78,58 @@ static bool invertMatrix(
 
     return true;
 }
-
 void TinyEKF::predict(const float u[]) {
     // calculating x
-    float x0 = EKF_K_L*EKF_TAU_R*u[1];
-    float x1 = 0.0050000000000000001*EKF_TAU_L + 0.0050000000000000001*EKF_TAU_R;
-    float x2 = EKF_TAU_L - EKF_TAU_R;
-    float x3 = EKF_WHEEL_BASE*x[1];
-    float x4 = 1/(EKF_TAU_L*EKF_TAU_R);
-    float next_x_0 = x4*(0.0050000000000000001*EKF_K_R*EKF_TAU_L*u[0] + EKF_TAU_L*EKF_TAU_R*x[0] + 0.0050000000000000001*x0 - x1*x[0] - 0.0025000000000000001*x2*x3);
-    float next_x_1 = -x4*(-0.01*EKF_K_R*EKF_TAU_L*u[0] - EKF_TAU_L*EKF_TAU_R*EKF_WHEEL_BASE*x[1] + 0.01*x0 + x1*x3 + 0.01*x2*x[0])/EKF_WHEEL_BASE;
+    float cse_x_0 = EKF_K_L*EKF_TAU_R*u[1];
+    float cse_x_1 = 0.0050000000000000001*EKF_TAU_L + 0.0050000000000000001*EKF_TAU_R;
+    float cse_x_2 = EKF_TAU_L - EKF_TAU_R;
+    float cse_x_3 = EKF_WHEEL_BASE*x[1];
+    float cse_x_4 = 1/(EKF_TAU_L*EKF_TAU_R);
+    float next_x_0 = cse_x_4*(0.0050000000000000001*EKF_K_R*EKF_TAU_L*u[0] + EKF_TAU_L*EKF_TAU_R*x[0] + 0.0050000000000000001*cse_x_0 - cse_x_1*x[0] - 0.0025000000000000001*cse_x_2*cse_x_3);
+    float next_x_1 = -cse_x_4*(-0.01*EKF_K_R*EKF_TAU_L*u[0] - EKF_TAU_L*EKF_TAU_R*EKF_WHEEL_BASE*x[1] + 0.01*cse_x_0 + cse_x_1*cse_x_3 + 0.01*cse_x_2*x[0])/EKF_WHEEL_BASE;
     float next_x_2 = x[2];
     // update x in memory
     x[0] = next_x_0;
     x[1] = next_x_1;
     x[2] = next_x_2;
-
     // calculating P
-    float x0 = pow(EKF_TAU_L, 2);
-    float x1 = pow(EKF_TAU_R, 2);
-    float x2 = x0*x1;
-    float x3 = EKF_TAU_L - EKF_TAU_R;
-    float x4 = 0.0025000000000000001*EKF_WHEEL_BASE;
-    float x5 = x3*x4;
-    float x6 = -EKF_TAU_L*EKF_TAU_R + 0.0050000000000000001*EKF_TAU_L + 0.0050000000000000001*EKF_TAU_R;
-    float x7 = P[0][1]*x6 + P[1][1]*x5;
-    float x8 = P[0][0]*x6 + P[1][0]*x5;
-    float x9 = 1/(x0*x1);
-    float x10 = EKF_WHEEL_BASE*x2;
-    float x11 = 0.01*x3;
-    float x12 = EKF_WHEEL_BASE*x6;
-    float x13 = 1.0/EKF_WHEEL_BASE;
-    float x14 = x13*x9;
-    float x15 = 1.0/EKF_TAU_L;
-    float x16 = 0.0050000000000000001*P[0][2];
-    float x17 = 1.0/EKF_TAU_R;
-    float x18 = P[1][2]*x4;
-    float x19 = P[0][1]*x11 + P[1][1]*x12;
-    float x20 = P[0][0]*x11 + P[1][0]*x12;
-    float x21 = pow(EKF_WHEEL_BASE, 2);
-    float x22 = 0.0050000000000000001*P[1][2];
-    float x23 = 0.01*x13;
-    float x24 = P[0][2]*x23;
-    float x25 = 0.0050000000000000001*P[2][0];
-    float x26 = P[2][1]*x4;
-    float x27 = 0.0050000000000000001*P[2][1];
-    float x28 = P[2][0]*x23;
-    float next_P_0_0 = x9*(Q[0][0]*x2 + x5*x7 + x6*x8);
-    float next_P_0_1 = x14*(Q[0][1]*x10 + x11*x8 + x12*x7);
-    float next_P_0_2 = P[0][2] + Q[0][2] - x15*x16 + x15*x18 - x16*x17 - x17*x18;
-    float next_P_1_0 = x14*(Q[1][0]*x10 + x19*x5 + x20*x6);
-    float next_P_1_1 = x9*(Q[1][1]*x2*x21 + x11*x20 + x12*x19)/x21;
-    float next_P_1_2 = P[1][2] + Q[1][2] - x15*x22 + x15*x24 - x17*x22 - x17*x24;
-    float next_P_2_0 = P[2][0] + Q[2][0] - x15*x25 + x15*x26 - x17*x25 - x17*x26;
-    float next_P_2_1 = P[2][1] + Q[2][1] - x15*x27 + x15*x28 - x17*x27 - x17*x28;
+    float cse_P_0 = pow(EKF_TAU_L, 2);
+    float cse_P_1 = pow(EKF_TAU_R, 2);
+    float cse_P_2 = cse_P_0*cse_P_1;
+    float cse_P_3 = EKF_TAU_L - EKF_TAU_R;
+    float cse_P_4 = 0.0025000000000000001*EKF_WHEEL_BASE;
+    float cse_P_5 = cse_P_3*cse_P_4;
+    float cse_P_6 = -EKF_TAU_L*EKF_TAU_R + 0.0050000000000000001*EKF_TAU_L + 0.0050000000000000001*EKF_TAU_R;
+    float cse_P_7 = P[0][1]*cse_P_6 + P[1][1]*cse_P_5;
+    float cse_P_8 = P[0][0]*cse_P_6 + P[1][0]*cse_P_5;
+    float cse_P_9 = 1/(cse_P_0*cse_P_1);
+    float cse_P_10 = EKF_WHEEL_BASE*cse_P_2;
+    float cse_P_11 = 0.01*cse_P_3;
+    float cse_P_12 = EKF_WHEEL_BASE*cse_P_6;
+    float cse_P_13 = 1.0/EKF_WHEEL_BASE;
+    float cse_P_14 = cse_P_13*cse_P_9;
+    float cse_P_15 = 1.0/EKF_TAU_L;
+    float cse_P_16 = 0.0050000000000000001*P[0][2];
+    float cse_P_17 = 1.0/EKF_TAU_R;
+    float cse_P_18 = P[1][2]*cse_P_4;
+    float cse_P_19 = P[0][1]*cse_P_11 + P[1][1]*cse_P_12;
+    float cse_P_20 = P[0][0]*cse_P_11 + P[1][0]*cse_P_12;
+    float cse_P_21 = pow(EKF_WHEEL_BASE, 2);
+    float cse_P_22 = 0.0050000000000000001*P[1][2];
+    float cse_P_23 = 0.01*cse_P_13;
+    float cse_P_24 = P[0][2]*cse_P_23;
+    float cse_P_25 = 0.0050000000000000001*P[2][0];
+    float cse_P_26 = P[2][1]*cse_P_4;
+    float cse_P_27 = 0.0050000000000000001*P[2][1];
+    float cse_P_28 = P[2][0]*cse_P_23;
+    float next_P_0_0 = cse_P_9*(Q[0][0]*cse_P_2 + cse_P_5*cse_P_7 + cse_P_6*cse_P_8);
+    float next_P_0_1 = cse_P_14*(Q[0][1]*cse_P_10 + cse_P_11*cse_P_8 + cse_P_12*cse_P_7);
+    float next_P_0_2 = P[0][2] + Q[0][2] - cse_P_15*cse_P_16 + cse_P_15*cse_P_18 - cse_P_16*cse_P_17 - cse_P_17*cse_P_18;
+    float next_P_1_0 = cse_P_14*(Q[1][0]*cse_P_10 + cse_P_19*cse_P_5 + cse_P_20*cse_P_6);
+    float next_P_1_1 = cse_P_9*(Q[1][1]*cse_P_2*cse_P_21 + cse_P_11*cse_P_20 + cse_P_12*cse_P_19)/cse_P_21;
+    float next_P_1_2 = P[1][2] + Q[1][2] - cse_P_15*cse_P_22 + cse_P_15*cse_P_24 - cse_P_17*cse_P_22 - cse_P_17*cse_P_24;
+    float next_P_2_0 = P[2][0] + Q[2][0] - cse_P_15*cse_P_25 + cse_P_15*cse_P_26 - cse_P_17*cse_P_25 - cse_P_17*cse_P_26;
+    float next_P_2_1 = P[2][1] + Q[2][1] - cse_P_15*cse_P_27 + cse_P_15*cse_P_28 - cse_P_17*cse_P_27 - cse_P_17*cse_P_28;
     float next_P_2_2 = P[2][2] + Q[2][2];
     // update P in memory
     P[0][0] = next_P_0_0;
@@ -140,13 +141,11 @@ void TinyEKF::predict(const float u[]) {
     P[2][0] = next_P_2_0;
     P[2][1] = next_P_2_1;
     P[2][2] = next_P_2_2;
-
 }
 
 void TinyEKF::update(const float z[], const float u[]) {
     float h[EKF_MEASURE_DIM];
     float H[EKF_MEASURE_DIM][EKF_STATE_DIM];
-
     // calculating h
     float next_h_0 = x[0];
     float next_h_1 = x[1];
@@ -159,9 +158,8 @@ void TinyEKF::update(const float z[], const float u[]) {
     h[2] = next_h_2;
     h[3] = next_h_3;
     h[4] = next_h_4;
-
     // calculating H
-    float x0 = 1/(EKF_TAU_L*EKF_TAU_R);
+    float cse_H_0 = 1/(EKF_TAU_L*EKF_TAU_R);
     float next_H_0_0 = 1;
     float next_H_0_1 = 0;
     float next_H_0_2 = 0;
@@ -171,8 +169,8 @@ void TinyEKF::update(const float z[], const float u[]) {
     float next_H_2_0 = 0;
     float next_H_2_1 = 1;
     float next_H_2_2 = 1;
-    float next_H_3_0 = -1.0/2.0*x0*(EKF_TAU_L + EKF_TAU_R);
-    float next_H_3_1 = (1.0/4.0)*EKF_WHEEL_BASE*x0*(-EKF_TAU_L + EKF_TAU_R);
+    float next_H_3_0 = -1.0/2.0*cse_H_0*(EKF_TAU_L + EKF_TAU_R);
+    float next_H_3_1 = (1.0/4.0)*EKF_WHEEL_BASE*cse_H_0*(-EKF_TAU_L + EKF_TAU_R);
     float next_H_3_2 = 0;
     float next_H_4_0 = x[1];
     float next_H_4_1 = x[0];
@@ -194,103 +192,78 @@ void TinyEKF::update(const float z[], const float u[]) {
     H[4][1] = next_H_4_1;
     H[4][2] = next_H_4_2;
 
-
-    // y = z - h
+    // calculate innovation y = z - h
     float y[EKF_MEASURE_DIM];
-
     for (int a = 0; a < EKF_MEASURE_DIM; a++) {
         y[a] = z[a] - h[a];
     }
 
-    // S = H * P * H^T + R
+    // calculate innovation covariance S = H * P * H^T + R
     float S[EKF_MEASURE_DIM][EKF_MEASURE_DIM] = {0};
-
     for (int a = 0; a < EKF_MEASURE_DIM; a++) {
         for (int b = 0; b < EKF_MEASURE_DIM; b++) {
             S[a][b] = R[a][b];
 
             for (int c = 0; c < EKF_STATE_DIM; c++) {
-                if (!H_MASK[a][c]) {
-                    continue;
-                }
+                if (!H_MASK[a][c]) continue;
 
                 for (int d = 0; d < EKF_STATE_DIM; d++) {
-                    if (!H_MASK[b][d]) {
-                        continue;
-                    }
-
+                    if (!H_MASK[b][d]) continue;
                     S[a][b] += H[a][c] * P[c][d] * H[b][d];
                 }
             }
         }
     }
 
-    // S_inv = inv(S)
+    // invert S matrix
     float S_inv[EKF_MEASURE_DIM][EKF_MEASURE_DIM];
-
     if (!invertMatrix(S, S_inv)) {
-        return;
+        return; // inversion failed
     }
 
-    // K = P * H^T * S_inv
+    // calculate kalman gain K = P * H^T * S_inv
     float K[EKF_STATE_DIM][EKF_MEASURE_DIM] = {0};
-
     for (int a = 0; a < EKF_STATE_DIM; a++) {
         for (int b = 0; b < EKF_MEASURE_DIM; b++) {
             for (int c = 0; c < EKF_STATE_DIM; c++) {
                 for (int d = 0; d < EKF_MEASURE_DIM; d++) {
-                    if (!H_MASK[d][c]) {
-                        continue;
-                    }
-
+                    if (!H_MASK[d][c]) continue;
                     K[a][b] += P[a][c] * H[d][c] * S_inv[d][b];
                 }
             }
         }
     }
 
-    // x = x + K * y
+    // update state estimate x = x + K * y
     for (int a = 0; a < EKF_STATE_DIM; a++) {
         float dx = 0.0f;
-
         for (int b = 0; b < EKF_MEASURE_DIM; b++) {
             dx += K[a][b] * y[b];
         }
-
         x[a] += dx;
     }
 
-    // KH = K * H
+    // calculate KH = K * H
     float KH[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
-
     for (int a = 0; a < EKF_STATE_DIM; a++) {
         for (int b = 0; b < EKF_STATE_DIM; b++) {
             for (int c = 0; c < EKF_MEASURE_DIM; c++) {
-                if (!H_MASK[c][b]) {
-                    continue;
-                }
-
+                if (!H_MASK[c][b]) continue;
                 KH[a][b] += K[a][c] * H[c][b];
             }
         }
     }
 
-    // I_KH = I - K * H
+    // calculate I_KH = I - K * H
     float I_KH[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
-
     for (int a = 0; a < EKF_STATE_DIM; a++) {
         for (int b = 0; b < EKF_STATE_DIM; b++) {
-            I_KH[a][b] = -KH[a][b];
-
-            if (a == b) {
-                I_KH[a][b] += 1.0f;
-            }
+            I_KH[a][b] = (a == b) ? 1.0f - KH[a][b] : -KH[a][b];
         }
     }
 
-    // P = (I - K * H) * P
+    // update covariance estimate P = (I - K * H) * P
     float newP[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
-
     for (int a = 0; a < EKF_STATE_DIM; a++) {
         for (int b = 0; b < EKF_STATE_DIM; b++) {
             for (int c = 0; c < EKF_STATE_DIM; c++) {

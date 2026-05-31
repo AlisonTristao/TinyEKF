@@ -53,7 +53,6 @@ def create_sym_matrix(name, rows, cols, is_vector=False):
     else:
         return sp.Matrix(rows, cols, lambda i, j: sp.Symbol(f'{name}[{i}][{j}]'))
 
-
 x = create_sym_matrix('x', dim_x, 1, is_vector=True)
 u = create_sym_matrix('u', dim_u, 1, is_vector=True)
 z = create_sym_matrix('z', dim_z, 1, is_vector=True)
@@ -132,17 +131,16 @@ header_filename = "TinyEKF.h"
 
 generated_defines = """
 // ==========================================
-// EKF generated defines
+// ekf generated defines
 // ==========================================
 """.strip()
 
 for name, value in default_defines.items():
     generated_defines += f"\n#define {name} {value}"
 
-generated_defines += """
-
+generated_defines += """\n
 // ==========================================
-// end EKF generated defines
+// end ekf generated defines
 // ==========================================
 """.strip("\n")
 
@@ -152,20 +150,20 @@ try:
 
     pattern = (
         r"// ==========================================\n"
-        r"// EKF generated defines\n"
+        r"// ekf generated defines\n"
         r"// ==========================================\n"
         r".*?"
         r"// ==========================================\n"
-        r"// end EKF generated defines\n"
+        r"// end ekf generated defines\n"
         r"// =========================================="
     )
 
-    if re.search(pattern, h_content, flags=re.DOTALL):
+    if re.search(pattern, h_content, flags=re.DOTALL | re.IGNORECASE):
         h_content = re.sub(
             pattern,
             generated_defines,
             h_content,
-            flags=re.DOTALL
+            flags=re.DOTALL | re.IGNORECASE
         )
     else:
         h_content = generated_defines + "\n\n" + h_content
@@ -185,7 +183,10 @@ except FileNotFoundError:
 # ==========================================
 def generate_cpp_block(expr_matrix, prefix):
     expr_matrix = sp.simplify(expr_matrix)
-    replacements, reduced_exprs = sp.cse(expr_matrix)
+    
+    # fix: inject specific prefix to prevent re-declaration errors in c++
+    symbols_generator = sp.numbered_symbols(f"cse_{prefix}_")
+    replacements, reduced_exprs = sp.cse(expr_matrix, symbols=symbols_generator)
 
     code = f"    // calculating {prefix}\n"
 
@@ -255,6 +256,7 @@ static bool invertMatrix(
 ) {
     float aug[EKF_MEASURE_DIM][2 * EKF_MEASURE_DIM];
 
+    // build augmented matrix
     for (int i = 0; i < EKF_MEASURE_DIM; i++) {
         for (int j = 0; j < EKF_MEASURE_DIM; j++) {
             aug[i][j] = A[i][j];
@@ -262,23 +264,26 @@ static bool invertMatrix(
         }
     }
 
+    // gauss-jordan elimination
     for (int i = 0; i < EKF_MEASURE_DIM; i++) {
         int pivot = i;
         float max_val = std::fabs(aug[i][i]);
 
+        // partial pivoting
         for (int row = i + 1; row < EKF_MEASURE_DIM; row++) {
             float val = std::fabs(aug[row][i]);
-
             if (val > max_val) {
                 max_val = val;
                 pivot = row;
             }
         }
 
+        // singular matrix check
         if (max_val < 1e-9f) {
             return false;
         }
 
+        // swap rows if needed
         if (pivot != i) {
             for (int col = 0; col < 2 * EKF_MEASURE_DIM; col++) {
                 float temp = aug[i][col];
@@ -287,25 +292,24 @@ static bool invertMatrix(
             }
         }
 
+        // scale pivot row
         float div = aug[i][i];
-
         for (int col = 0; col < 2 * EKF_MEASURE_DIM; col++) {
             aug[i][col] /= div;
         }
 
+        // eliminate column entries
         for (int row = 0; row < EKF_MEASURE_DIM; row++) {
-            if (row == i) {
-                continue;
-            }
-
+            if (row == i) continue;
+            
             float factor = aug[row][i];
-
             for (int col = 0; col < 2 * EKF_MEASURE_DIM; col++) {
                 aug[row][col] -= factor * aug[i][col];
             }
         }
     }
 
+    // extract inverse matrix
     for (int i = 0; i < EKF_MEASURE_DIM; i++) {
         for (int j = 0; j < EKF_MEASURE_DIM; j++) {
             A_inv[i][j] = aug[i][j + EKF_MEASURE_DIM];
@@ -314,7 +318,6 @@ static bool invertMatrix(
 
     return true;
 }
-
 """
 
 # ==========================================
@@ -324,14 +327,13 @@ cpp_code += "void TinyEKF::predict(const float u[]) {\n"
 
 cpp_code += generate_cpp_block(f, "x")
 
-# P = F * P * F^T + Q
+# calculate P = F * P * F^T + Q
 cpp_code += generate_cpp_block((f_jac * p * f_jac.T) + q, "P")
 
 cpp_code += "}\n\n"
 
 # ==========================================
 # update
-# h depends on u because acc_x = v_dot
 # ==========================================
 cpp_code += "void TinyEKF::update(const float z[], const float u[]) {\n"
 
@@ -342,102 +344,78 @@ cpp_code += generate_cpp_block(h, "h")
 cpp_code += generate_cpp_block(h_jac, "H")
 
 cpp_code += """
-    // y = z - h
+    // calculate innovation y = z - h
     float y[EKF_MEASURE_DIM];
-
     for (int a = 0; a < EKF_MEASURE_DIM; a++) {
         y[a] = z[a] - h[a];
     }
 
-    // S = H * P * H^T + R
+    // calculate innovation covariance S = H * P * H^T + R
     float S[EKF_MEASURE_DIM][EKF_MEASURE_DIM] = {0};
-
     for (int a = 0; a < EKF_MEASURE_DIM; a++) {
         for (int b = 0; b < EKF_MEASURE_DIM; b++) {
             S[a][b] = R[a][b];
 
             for (int c = 0; c < EKF_STATE_DIM; c++) {
-                if (!H_MASK[a][c]) {
-                    continue;
-                }
+                if (!H_MASK[a][c]) continue;
 
                 for (int d = 0; d < EKF_STATE_DIM; d++) {
-                    if (!H_MASK[b][d]) {
-                        continue;
-                    }
-
+                    if (!H_MASK[b][d]) continue;
                     S[a][b] += H[a][c] * P[c][d] * H[b][d];
                 }
             }
         }
     }
 
-    // S_inv = inv(S)
+    // invert S matrix
     float S_inv[EKF_MEASURE_DIM][EKF_MEASURE_DIM];
-
     if (!invertMatrix(S, S_inv)) {
-        return;
+        return; // inversion failed
     }
 
-    // K = P * H^T * S_inv
+    // calculate kalman gain K = P * H^T * S_inv
     float K[EKF_STATE_DIM][EKF_MEASURE_DIM] = {0};
-
     for (int a = 0; a < EKF_STATE_DIM; a++) {
         for (int b = 0; b < EKF_MEASURE_DIM; b++) {
             for (int c = 0; c < EKF_STATE_DIM; c++) {
                 for (int d = 0; d < EKF_MEASURE_DIM; d++) {
-                    if (!H_MASK[d][c]) {
-                        continue;
-                    }
-
+                    if (!H_MASK[d][c]) continue;
                     K[a][b] += P[a][c] * H[d][c] * S_inv[d][b];
                 }
             }
         }
     }
 
-    // x = x + K * y
+    // update state estimate x = x + K * y
     for (int a = 0; a < EKF_STATE_DIM; a++) {
         float dx = 0.0f;
-
         for (int b = 0; b < EKF_MEASURE_DIM; b++) {
             dx += K[a][b] * y[b];
         }
-
         x[a] += dx;
     }
 
-    // KH = K * H
+    // calculate KH = K * H
     float KH[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
-
     for (int a = 0; a < EKF_STATE_DIM; a++) {
         for (int b = 0; b < EKF_STATE_DIM; b++) {
             for (int c = 0; c < EKF_MEASURE_DIM; c++) {
-                if (!H_MASK[c][b]) {
-                    continue;
-                }
-
+                if (!H_MASK[c][b]) continue;
                 KH[a][b] += K[a][c] * H[c][b];
             }
         }
     }
 
-    // I_KH = I - K * H
+    // calculate I_KH = I - K * H
     float I_KH[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
-
     for (int a = 0; a < EKF_STATE_DIM; a++) {
         for (int b = 0; b < EKF_STATE_DIM; b++) {
-            I_KH[a][b] = -KH[a][b];
-
-            if (a == b) {
-                I_KH[a][b] += 1.0f;
-            }
+            I_KH[a][b] = (a == b) ? 1.0f - KH[a][b] : -KH[a][b];
         }
     }
 
-    // P = (I - K * H) * P
+    // update covariance estimate P = (I - K * H) * P
     float newP[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
-
     for (int a = 0; a < EKF_STATE_DIM; a++) {
         for (int b = 0; b < EKF_STATE_DIM; b++) {
             for (int c = 0; c < EKF_STATE_DIM; c++) {

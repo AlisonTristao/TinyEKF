@@ -1,6 +1,6 @@
 {
   "name": "TinyLKF",
-  "version": "0.2.0 non-linear version",
+  "version": "0.3.0 non-linear version",
   "description": "A tiny LKF implementation for embedded systems.",
   "main": "TinyLKF.cpp",
   "repository": {
@@ -8,10 +8,12 @@
     "url": "https://github.com/AlisonTristao/TinyLKF.git"
   },
   "keywords": [
-    "shell",
+    "EKF",
+    "kalman",
     "embedded",
-    "command",
-    "help"
+    "estimation",
+    "esp32",
+    "arduino"
   ],
   "author": "Alison Tristao"
 }
