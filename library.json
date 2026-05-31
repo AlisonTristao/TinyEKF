@@ -1,6 +1,6 @@
 {
   "name": "TinyLKF",
-  "version": "0.1.0 first release",
+  "version": "0.2.0 non-linear version",
   "description": "A tiny LKF implementation for embedded systems.",
   "main": "TinyLKF.cpp",
   "repository": {
