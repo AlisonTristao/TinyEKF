@@ -1,0 +1,17 @@
+{
+  "name": "TinyLKF",
+  "version": "0.1.0 first release",
+  "description": "A tiny LKF implementation for embedded systems.",
+  "main": "TinyLKF.cpp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AlisonTristao/TinyLKF.git"
+  },
+  "keywords": [
+    "shell",
+    "embedded",
+    "command",
+    "help"
+  ],
+  "author": "Alison Tristao"
+}
