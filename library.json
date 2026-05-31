@@ -1,11 +1,11 @@
 {
-  "name": "TinyLKF",
+  "name": "TinyEKF",
   "version": "0.3.0 non-linear version",
-  "description": "A tiny LKF implementation for embedded systems.",
-  "main": "TinyLKF.cpp",
+  "description": "A tiny EKF implementation for embedded systems.",
+  "main": "TinyEKF.cpp",
   "repository": {
     "type": "git",
-    "url": "https://github.com/AlisonTristao/TinyLKF.git"
+    "url": "https://github.com/AlisonTristao/TinyEKF.git"
   },
   "keywords": [
     "EKF",
