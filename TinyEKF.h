@@ -1,3 +1,19 @@
+// ==========================================
+// EKF generated defines
+// ==========================================
+#define EKF_STATE_DIM 3
+#define EKF_MEASURE_DIM 5
+#define EKF_CONTROL_DIM 2
+#define EKF_WHEEL_BASE 0.30f
+#define EKF_K_R 1.0f
+#define EKF_K_L 1.0f
+#define EKF_TAU_R 0.15f
+#define EKF_TAU_L 0.15f
+#define EKF_IMU_RX 0.1f
+#define EKF_IMU_RY 0.1f// ==========================================
+// end EKF generated defines
+// ==========================================
+
 #ifndef TINYEKF_H
 #define TINYEKF_H
 
@@ -6,10 +22,6 @@
 // **********************************
 // *       Class of TinyEKF         *
 // **********************************
-
-#define EKF_STATE_DIM 2    
-#define EKF_MEASURE_DIM 2  
-#define EKF_CONTROL_DIM 1 
 
 class TinyEKF {
 public:
@@ -32,7 +44,7 @@ public:
     }
 
     void predict(const float u[EKF_CONTROL_DIM]);
-    void update(const float z[EKF_MEASURE_DIM]);
+    void update(const float z[EKF_MEASURE_DIM], const float u[EKF_CONTROL_DIM]);
     float get_state(uint8_t index) const { return x[index]; }
 private:
     float x[EKF_STATE_DIM];
