@@ -4,14 +4,14 @@ import re
 # ==========================================
 # 1. parameters and dimensions
 # ==========================================
-frequency = 100
+frequency = 1000
 dt = 1.0 / frequency
 
 dim_x = 3
 dim_u = 2
 dim_z = 5
 
-USE_IMU_OFFSET = False
+USE_IMU_OFFSET = True
 
 # ==========================================
 # 2. symbolic constants mapped to header defines
@@ -60,6 +60,11 @@ z = create_sym_matrix('z', dim_z, 1, is_vector=True)
 p = create_sym_matrix('P', dim_x, dim_x)
 q = create_sym_matrix('Q', dim_x, dim_x)
 r = create_sym_matrix('R', dim_z, dim_z)
+
+# 3.1 intermediate symbolic variables (for unrolling)
+s_inv = create_sym_matrix('S_inv', dim_z, dim_z)
+y_vec = create_sym_matrix('y', dim_z, 1, is_vector=True)
+I = sp.eye(dim_x)
 
 # ==========================================
 # 4. physical model
@@ -119,10 +124,15 @@ h = sp.Matrix([
 ])
 
 # ==========================================
-# 6. jacobians
+# 6. jacobians and symbolic update equations
 # ==========================================
 f_jac = sp.simplify(f.jacobian(x))
 h_jac = sp.simplify(h.jacobian(x))
+
+S_sym = sp.simplify(h_jac * p * h_jac.T + r)
+K_sym = sp.simplify(p * h_jac.T * s_inv)
+x_update_sym = sp.simplify(x + K_sym * y_vec)
+P_update_sym = sp.simplify((I - K_sym * h_jac) * p)
 
 # ==========================================
 # 7. header update
@@ -324,7 +334,7 @@ cpp_code += generate_cpp_block((f_jac * p * f_jac.T) + q, "P")
 cpp_code += "}\n\n"
 
 # ==========================================
-# update
+# update (FULLY UNROLLED)
 # ==========================================
 cpp_code += "void TinyEKF::update(const float z[], const float u[]) {\n"
 cpp_code += "    float h[EKF_MEASURE_DIM];\n"
@@ -341,87 +351,34 @@ cpp_code += """
         y[a] = z[a] - h[a];
     }
 
-    // calculate innovation covariance S = H * P * H^T + R
+    // declare S matrix
     float S[EKF_MEASURE_DIM][EKF_MEASURE_DIM] = {0};
-    for (int a = 0; a < EKF_MEASURE_DIM; a++) {
-        for (int b = 0; b < EKF_MEASURE_DIM; b++) {
-            S[a][b] = R[a][b];
+"""
 
-            for (int c = 0; c < EKF_STATE_DIM; c++) {
-                if (!H_MASK[a][c]) continue;
+cpp_code += "\n"
+cpp_code += generate_cpp_block(S_sym, "S")
 
-                for (int d = 0; d < EKF_STATE_DIM; d++) {
-                    if (!H_MASK[b][d]) continue;
-                    S[a][b] += H[a][c] * P[c][d] * H[b][d];
-                }
-            }
-        }
-    }
-
-    // invert S matrix
+cpp_code += """
+    // invert S matrix numerically (prevents instruction cache miss from huge symbolic inverse)
     float S_inv[EKF_MEASURE_DIM][EKF_MEASURE_DIM];
     if (!invertMatrix(S, S_inv)) {
-        return; // inversion failed
+        return; // inversion failed, discard measurement
     }
 
-    // calculate kalman gain K = P * H^T * S_inv
+    // declare K matrix
     float K[EKF_STATE_DIM][EKF_MEASURE_DIM] = {0};
-    for (int a = 0; a < EKF_STATE_DIM; a++) {
-        for (int b = 0; b < EKF_MEASURE_DIM; b++) {
-            for (int c = 0; c < EKF_STATE_DIM; c++) {
-                for (int d = 0; d < EKF_MEASURE_DIM; d++) {
-                    if (!H_MASK[d][c]) continue;
-                    K[a][b] += P[a][c] * H[d][c] * S_inv[d][b];
-                }
-            }
-        }
-    }
-
-    // update state estimate x = x + K * y
-    for (int a = 0; a < EKF_STATE_DIM; a++) {
-        float dx = 0.0f;
-        for (int b = 0; b < EKF_MEASURE_DIM; b++) {
-            dx += K[a][b] * y[b];
-        }
-        x[a] += dx;
-    }
-
-    // calculate KH = K * H
-    float KH[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
-    for (int a = 0; a < EKF_STATE_DIM; a++) {
-        for (int b = 0; b < EKF_STATE_DIM; b++) {
-            for (int c = 0; c < EKF_MEASURE_DIM; c++) {
-                if (!H_MASK[c][b]) continue;
-                KH[a][b] += K[a][c] * H[c][b];
-            }
-        }
-    }
-
-    // calculate I_KH = I - K * H
-    float I_KH[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
-    for (int a = 0; a < EKF_STATE_DIM; a++) {
-        for (int b = 0; b < EKF_STATE_DIM; b++) {
-            I_KH[a][b] = (a == b) ? 1.0f - KH[a][b] : -KH[a][b];
-        }
-    }
-
-    // update covariance estimate P = (I - K * H) * P
-    float newP[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
-    for (int a = 0; a < EKF_STATE_DIM; a++) {
-        for (int b = 0; b < EKF_STATE_DIM; b++) {
-            for (int c = 0; c < EKF_STATE_DIM; c++) {
-                newP[a][b] += I_KH[a][c] * P[c][b];
-            }
-        }
-    }
-
-    for (int a = 0; a < EKF_STATE_DIM; a++) {
-        for (int b = 0; b < EKF_STATE_DIM; b++) {
-            P[a][b] = newP[a][b];
-        }
-    }
-}
 """
+
+cpp_code += "\n"
+cpp_code += generate_cpp_block(K_sym, "K")
+
+cpp_code += "\n    // update state estimate x\n"
+cpp_code += generate_cpp_block(x_update_sym, "x")
+
+cpp_code += "\n    // update covariance estimate P\n"
+cpp_code += generate_cpp_block(P_update_sym, "P")
+
+cpp_code += "}\n"
 
 with open(cpp_filename, "w") as file:
     file.write(cpp_code)
