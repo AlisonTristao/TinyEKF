@@ -61,11 +61,6 @@ p = create_sym_matrix('P', dim_x, dim_x)
 q = create_sym_matrix('Q', dim_x, dim_x)
 r = create_sym_matrix('R', dim_z, dim_z)
 
-# 3.1 intermediate symbolic variables (for unrolling)
-s_inv = create_sym_matrix('S_inv', dim_z, dim_z)
-y_vec = create_sym_matrix('y', dim_z, 1, is_vector=True)
-I = sp.eye(dim_x)
-
 # ==========================================
 # 4. physical model
 # x = [v, w, bg]
@@ -124,15 +119,10 @@ h = sp.Matrix([
 ])
 
 # ==========================================
-# 6. jacobians and symbolic update equations
+# 6. jacobians
 # ==========================================
 f_jac = sp.simplify(f.jacobian(x))
 h_jac = sp.simplify(h.jacobian(x))
-
-S_sym = sp.simplify(h_jac * p * h_jac.T + r)
-K_sym = sp.simplify(p * h_jac.T * s_inv)
-x_update_sym = sp.simplify(x + K_sym * y_vec)
-P_update_sym = sp.simplify((I - K_sym * h_jac) * p)
 
 # ==========================================
 # 7. header update
@@ -197,7 +187,7 @@ def generate_cpp_block(expr_matrix, prefix):
     symbols_generator = sp.numbered_symbols(f"cse_{prefix}_")
     replacements, reduced_exprs = sp.cse(expr_matrix, symbols=symbols_generator)
 
-    code = f"    // calculating {prefix}\n"
+    code = f"    // calculating {prefix} (non-linear algebraic block)\n"
 
     for var, expr in replacements:
         code += f"    float {var} = {sp.ccode(expr)};\n"
@@ -248,7 +238,8 @@ def generate_H_mask(H_sym):
 # ==========================================
 cpp_filename = "TinyEKF.cpp"
 
-cpp_code = '#include "TinyEKF.h"\n'
+cpp_code = '#pragma GCC optimize ("O3,unroll-loops")\n'
+cpp_code += '#include "TinyEKF.h"\n'
 cpp_code += "#include <cmath>\n\n"
 
 cpp_code += generate_H_mask(h_jac)
@@ -272,7 +263,6 @@ cpp_code += """static bool invertMatrix(
         int pivot = i;
         float max_val = std::fabs(aug[i][i]);
 
-        // partial pivoting
         for (int row = i + 1; row < EKF_MEASURE_DIM; row++) {
             float val = std::fabs(aug[row][i]);
             if (val > max_val) {
@@ -281,12 +271,10 @@ cpp_code += """static bool invertMatrix(
             }
         }
 
-        // singular matrix check
         if (max_val < 1e-9f) {
             return false;
         }
 
-        // swap rows if needed
         if (pivot != i) {
             for (int col = 0; col < 2 * EKF_MEASURE_DIM; col++) {
                 float temp = aug[i][col];
@@ -295,16 +283,13 @@ cpp_code += """static bool invertMatrix(
             }
         }
 
-        // scale pivot row
         float div = aug[i][i];
         for (int col = 0; col < 2 * EKF_MEASURE_DIM; col++) {
             aug[i][col] /= div;
         }
 
-        // eliminate column entries
         for (int row = 0; row < EKF_MEASURE_DIM; row++) {
             if (row == i) continue;
-            
             float factor = aug[row][i];
             for (int col = 0; col < 2 * EKF_MEASURE_DIM; col++) {
                 aug[row][col] -= factor * aug[i][col];
@@ -325,60 +310,143 @@ cpp_code += """static bool invertMatrix(
 """
 
 # ==========================================
-# predict
+# predict (Hybrid: Symbolic F + loops for P)
 # ==========================================
 cpp_code += "void TinyEKF::predict(const float u[]) {\n"
 cpp_code += generate_cpp_block(f, "x")
-cpp_code += "\n"
-cpp_code += generate_cpp_block((f_jac * p * f_jac.T) + q, "P")
-cpp_code += "}\n\n"
+cpp_code += "\n    float F[EKF_STATE_DIM][EKF_STATE_DIM] = {0};\n"
+cpp_code += generate_cpp_block(f_jac, "F")
+
+cpp_code += """
+    float P_next[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
+    float Temp[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
+
+    // Temp = F * P
+    for (int i = 0; i < EKF_STATE_DIM; i++) {
+        for (int j = 0; j < EKF_STATE_DIM; j++) {
+            for (int k = 0; k < EKF_STATE_DIM; k++) {
+                Temp[i][j] += F[i][k] * P[k][j];
+            }
+        }
+    }
+
+    // P_next = Temp * F^T + Q
+    for (int i = 0; i < EKF_STATE_DIM; i++) {
+        for (int j = 0; j < EKF_STATE_DIM; j++) {
+            for (int k = 0; k < EKF_STATE_DIM; k++) {
+                P_next[i][j] += Temp[i][k] * F[j][k]; 
+            }
+            P_next[i][j] += Q[i][j];
+        }
+    }
+
+    // Copy back to P
+    for (int i = 0; i < EKF_STATE_DIM; i++) {
+        for (int j = 0; j < EKF_STATE_DIM; j++) {
+            P[i][j] = P_next[i][j];
+        }
+    }
+}
+
+"""
 
 # ==========================================
-# update (FULLY UNROLLED)
+# update (Hybrid: Symbolic H + loops for Matrices)
 # ==========================================
 cpp_code += "void TinyEKF::update(const float z[], const float u[]) {\n"
-cpp_code += "    float h[EKF_MEASURE_DIM];\n"
-cpp_code += "    float H[EKF_MEASURE_DIM][EKF_STATE_DIM];\n\n"
+cpp_code += "    float h_vec[EKF_MEASURE_DIM] = {0};\n"
+cpp_code += "    float H[EKF_MEASURE_DIM][EKF_STATE_DIM] = {0};\n\n"
 
-cpp_code += generate_cpp_block(h, "h")
+cpp_code += generate_cpp_block(h, "h_vec")
 cpp_code += "\n"
 cpp_code += generate_cpp_block(h_jac, "H")
 
 cpp_code += """
-    // calculate innovation y = z - h
+    // 1. Calculate innovation y = z - h_vec
     float y[EKF_MEASURE_DIM];
-    for (int a = 0; a < EKF_MEASURE_DIM; a++) {
-        y[a] = z[a] - h[a];
+    for (int i = 0; i < EKF_MEASURE_DIM; i++) {
+        y[i] = z[i] - h_vec[i];
     }
 
-    // declare S matrix
+    // 2. S = H * P * H^T + R
     float S[EKF_MEASURE_DIM][EKF_MEASURE_DIM] = {0};
-"""
+    float Temp_HP[EKF_MEASURE_DIM][EKF_STATE_DIM] = {0};
 
-cpp_code += "\n"
-cpp_code += generate_cpp_block(S_sym, "S")
+    // Temp_HP = H * P
+    for (int i = 0; i < EKF_MEASURE_DIM; i++) {
+        for (int j = 0; j < EKF_STATE_DIM; j++) {
+            for (int k = 0; k < EKF_STATE_DIM; k++) {
+                Temp_HP[i][j] += H[i][k] * P[k][j];
+            }
+        }
+    }
 
-cpp_code += """
-    // invert S matrix numerically (prevents instruction cache miss from huge symbolic inverse)
+    // S = Temp_HP * H^T + R
+    for (int i = 0; i < EKF_MEASURE_DIM; i++) {
+        for (int j = 0; j < EKF_MEASURE_DIM; j++) {
+            for (int k = 0; k < EKF_STATE_DIM; k++) {
+                S[i][j] += Temp_HP[i][k] * H[j][k];
+            }
+            S[i][j] += R[i][j];
+        }
+    }
+
+    // 3. Invert S matrix numerically
     float S_inv[EKF_MEASURE_DIM][EKF_MEASURE_DIM];
     if (!invertMatrix(S, S_inv)) {
-        return; // inversion failed, discard measurement
+        return; // Inversion failed, discard measurement
     }
 
-    // declare K matrix
+    // 4. K = P * H^T * S_inv
     float K[EKF_STATE_DIM][EKF_MEASURE_DIM] = {0};
+    float Temp_PHT[EKF_STATE_DIM][EKF_MEASURE_DIM] = {0};
+
+    // Temp_PHT = P * H^T
+    for (int i = 0; i < EKF_STATE_DIM; i++) {
+        for (int j = 0; j < EKF_MEASURE_DIM; j++) {
+            for (int k = 0; k < EKF_STATE_DIM; k++) {
+                Temp_PHT[i][j] += P[i][k] * H[j][k];
+            }
+        }
+    }
+
+    // K = Temp_PHT * S_inv
+    for (int i = 0; i < EKF_STATE_DIM; i++) {
+        for (int j = 0; j < EKF_MEASURE_DIM; j++) {
+            for (int k = 0; k < EKF_MEASURE_DIM; k++) {
+                K[i][j] += Temp_PHT[i][k] * S_inv[k][j];
+            }
+        }
+    }
+
+    // 5. Update state estimate: x = x + K * y
+    for (int i = 0; i < EKF_STATE_DIM; i++) {
+        for (int j = 0; j < EKF_MEASURE_DIM; j++) {
+            x[i] += K[i][j] * y[j];
+        }
+    }
+
+    // 6. Update covariance estimate: P = (I - K * H) * P
+    float P_next[EKF_STATE_DIM][EKF_STATE_DIM] = {0};
+    
+    // P_next = P - K * (H * P) -> Reusing Temp_HP!
+    for (int i = 0; i < EKF_STATE_DIM; i++) {
+        for (int j = 0; j < EKF_STATE_DIM; j++) {
+            P_next[i][j] = P[i][j];
+            for (int k = 0; k < EKF_MEASURE_DIM; k++) {
+                P_next[i][j] -= K[i][k] * Temp_HP[k][j];
+            }
+        }
+    }
+
+    // Copy back to P
+    for (int i = 0; i < EKF_STATE_DIM; i++) {
+        for (int j = 0; j < EKF_STATE_DIM; j++) {
+            P[i][j] = P_next[i][j];
+        }
+    }
+}
 """
-
-cpp_code += "\n"
-cpp_code += generate_cpp_block(K_sym, "K")
-
-cpp_code += "\n    // update state estimate x\n"
-cpp_code += generate_cpp_block(x_update_sym, "x")
-
-cpp_code += "\n    // update covariance estimate P\n"
-cpp_code += generate_cpp_block(P_update_sym, "P")
-
-cpp_code += "}\n"
 
 with open(cpp_filename, "w") as file:
     file.write(cpp_code)
