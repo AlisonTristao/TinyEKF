@@ -1,6 +1,6 @@
 {
   "name": "TinyEKF",
-  "version": "0.3.0 non-linear version",
+  "version": "0.4.0 non-linear version",
   "description": "A tiny EKF implementation for embedded systems.",
   "main": "TinyEKF.cpp",
   "repository": {
